@@ -128,6 +128,9 @@ def incremental_train_and_eval(the_args, epochs, fusion_vars, ref_fusion_vars, b
             gt_index = torch.zeros(outputs_bs.size()).to(device)
             gt_index = gt_index.scatter(1, targets.view(-1,1), 1).ge(0.5)
             gt_scores = outputs_bs.masked_select(gt_index)
+            tmp = outputs_bs[:, num_old_classes:]
+            ##
+            # if the number of new classes is smaller than K, then bugged
             max_novel_scores = outputs_bs[:, num_old_classes:].topk(K, dim=1)[0]
             hard_index = targets.lt(num_old_classes)
             hard_num = torch.nonzero(hard_index).size(0)

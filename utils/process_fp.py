@@ -21,6 +21,12 @@ def process_inputs_fp(the_args, fusion_vars, b1_model, b2_model, inputs, feature
     elif the_args.dataset == 'imagenet_sub' or the_args.dataset == 'imagenet':
         b1_model_group1 = [b1_model.conv1, b1_model.bn1, b1_model.relu, b1_model.maxpool, b1_model.layer1]
         b2_model_group1 = [b2_model.conv1, b2_model.bn1, b2_model.relu, b2_model.maxpool, b2_model.layer1]
+    elif the_args.dataset == 'mnist':
+        b1_model_group1 = [b1_model.conv1, b1_model.bn1, b1_model.relu, b1_model.layer1]
+        b2_model_group1 = [b2_model.conv1, b2_model.bn1, b2_model.relu, b2_model.layer1]
+    elif the_args.dataset == 'loris':
+        b1_model_group1 = [b1_model.conv1, b1_model.bn1, b1_model.relu, b1_model.maxpool, b1_model.layer1]
+        b2_model_group1 = [b2_model.conv1, b2_model.bn1, b2_model.relu, b2_model.maxpool, b2_model.layer1]
     else:
         raise ValueError('Please set correct dataset.')
     b1_model_group1 = nn.Sequential(*b1_model_group1)
@@ -37,10 +43,10 @@ def process_inputs_fp(the_args, fusion_vars, b1_model, b2_model, inputs, feature
     fp2 = fusion_vars[1]*b1_fp2+(1-fusion_vars[1])*b2_fp2
 
     # The 3rd level
-    if the_args.dataset == 'cifar100':
+    if the_args.dataset == 'cifar100' or the_args.dataset == 'mnist':
         b1_model_group3 = [b1_model.layer3, b1_model.avgpool]
         b2_model_group3 = [b2_model.layer3, b2_model.avgpool]
-    elif the_args.dataset == 'imagenet_sub' or the_args.dataset == 'imagenet':
+    elif the_args.dataset == 'imagenet_sub' or the_args.dataset == 'imagenet' or the_args.dataset == 'loris':
         b1_model_group3 = b1_model.layer3
         b2_model_group3 = b2_model.layer3
     else:
@@ -51,9 +57,9 @@ def process_inputs_fp(the_args, fusion_vars, b1_model, b2_model, inputs, feature
     b2_fp3 = b2_model_group3(fp2)
     fp3 = fusion_vars[2]*b1_fp3+(1-fusion_vars[2])*b2_fp3
 
-    if the_args.dataset == 'cifar100': 
+    if the_args.dataset == 'cifar100' or the_args.dataset == 'mnist':
         fp_final = fp3.view(fp3.size(0), -1)
-    elif the_args.dataset == 'imagenet_sub' or the_args.dataset == 'imagenet':
+    elif the_args.dataset == 'imagenet_sub' or the_args.dataset == 'imagenet' or the_args.dataset == 'loris':
         # The 4th level
         b1_model_group4 = [b1_model.layer4, b1_model.avgpool]
         b1_model_group4 = nn.Sequential(*b1_model_group4)

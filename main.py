@@ -19,14 +19,14 @@ if __name__ == '__main__':
 
     ### Basic parameters
     parser.add_argument('--gpu', default='0', help='the index of GPU')
-    parser.add_argument('--dataset', default='cifar100', type=str, choices=['cifar100', 'imagenet_sub', 'imagenet'])
+    parser.add_argument('--dataset', default='cifar100', type=str, choices=['cifar100', 'imagenet_sub', 'imagenet', 'mnist'])
     parser.add_argument('--data_dir', default='data/seed_1993_subset_100_imagenet/data', type=str)
     parser.add_argument('--baseline', default='lucir', type=str, choices=['lucir', 'icarl'], help='baseline method')
     parser.add_argument('--ckpt_label', type=str, default='exp01', help='the label for the checkpoints')
     parser.add_argument('--ckpt_dir_fg', type=str, default='-', help='the checkpoint file for the 0-th phase')
     parser.add_argument('--resume_fg', action='store_true', help='resume 0-th phase model from the checkpoint')
     parser.add_argument('--resume', action='store_true', help='resume from the checkpoints')
-    parser.add_argument('--num_workers', default=8, type=int, help='the number of workers for loading data')
+    parser.add_argument('--num_workers', default=0, type=int, help='the number of workers for loading data')
     parser.add_argument('--random_seed', default=1993, type=int, help='random seed')
     parser.add_argument('--train_batch_size', default=128, type=int, help='the batch size for train loader')
     parser.add_argument('--test_batch_size', default=100, type=int, help='the batch size for test loader')
@@ -41,8 +41,8 @@ if __name__ == '__main__':
 
     ### Incremental learning parameters
     parser.add_argument('--num_classes', default=100, type=int, help='the total number of classes')
-    parser.add_argument('--nb_cl_fg', default=50, type=int, help='the number of classes in the 0-th phase')
-    parser.add_argument('--nb_cl', default=10, type=int, help='the number of classes for each phase')
+    parser.add_argument('--nb_cl_fg', default=5, type=int, help='the number of classes in the 0-th phase')
+    parser.add_argument('--nb_cl', default=1, type=int, help='the number of classes for each phase')
     parser.add_argument('--nb_protos', default=20, type=int, help='the number of exemplars for each class')
     parser.add_argument('--epochs', default=160, type=int, help='the number of epochs')
     parser.add_argument('--dynamic_budget', action='store_true', help='using dynamic budget setting')
@@ -79,9 +79,9 @@ if __name__ == '__main__':
     print('Using gpu:', the_args.gpu)
 
     # Occupy GPU memory in advance
-    if the_args.disable_gpu_occupancy:
-        occupy_memory(the_args.gpu)
-        print('Occupy GPU memory in advance.')
+    # if the_args.disable_gpu_occupancy:
+    #     occupy_memory(the_args.gpu)
+    #     print('Occupy GPU memory in advance.')
 
     # Set the trainer and start training
     trainer = Trainer(the_args)

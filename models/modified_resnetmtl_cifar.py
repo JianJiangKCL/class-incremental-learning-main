@@ -53,17 +53,17 @@ class BasicBlockMtl(nn.Module):
 
 class ResNetMtl(nn.Module):
 
-    def __init__(self, block, layers, num_classes=10):
+    def __init__(self, block, layers, num_classes=10, in_dim=3):
         self.inplanes = 16
         super(ResNetMtl, self).__init__()
-        self.conv1 = Conv2dMtl(3, 16, kernel_size=3, stride=1, padding=1,
+        self.conv1 = Conv2dMtl(in_dim, 16, kernel_size=3, stride=1, padding=1,
                                bias=False)
         self.bn1 = nn.BatchNorm2d(16)
         self.relu = nn.ReLU(inplace=True)
         self.layer1 = self._make_layer(block, 16, layers[0])
         self.layer2 = self._make_layer(block, 32, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 64, layers[2], stride=2, last_phase=True)
-        self.avgpool = nn.AvgPool2d(8, stride=1)
+        self.avgpool = nn.AdaptiveAvgPool2d((1,1))
         self.fc = modified_linear.CosineLinear(64 * block.expansion, num_classes)
 
         for m in self.modules():

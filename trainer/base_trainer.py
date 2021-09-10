@@ -42,8 +42,9 @@ from utils.imagenet.utils_dataset import merge_images_labels
 from utils.incremental.compute_features import compute_features
 from utils.incremental.compute_accuracy import compute_accuracy
 from utils.misc import process_mnemonics
-from torchvision.datasets import MNIST
+# from torchvision.datasets import MNIST
 import warnings
+from dataset import MyMNIST
 warnings.filterwarnings('ignore')
 
 class BaseTrainer(object):
@@ -70,6 +71,8 @@ class BaseTrainer(object):
             '_nfg' + str(self.args.nb_cl_fg) + \
             '_ncls' + str(self.args.nb_cl) + \
             '_nproto' + str(self.args.nb_protos) + \
+            '_lr' + str(self.args.base_lr2) + \
+             '_epoch' + str(self.args.epochs) + \
             '_' + self.args.baseline + \
             '_' + self.args.branch_mode + \
             '_b1' + self.args.branch_1
@@ -113,7 +116,36 @@ class BaseTrainer(object):
             self.lr_strat = [int(self.args.epochs*0.5), int(self.args.epochs*0.75)]
             # Set the dictionary size
             self.dictionary_size = 500
+        elif self.args.dataset =='mnist':
 
+            # Set CIFAR-100
+            # Set the pre-processing steps for training set
+            self.transform_train = self.transform_test =transform_MNIST = transforms.Compose(
+            [
+             transforms.ToTensor(),
+             transforms.Normalize((0.1307,), (0.3081,))
+             ]
+        )
+
+            # Initial the dataloader
+            self.trainset = MyMNIST(root='./data', train=True, download=True,                 transform=self.transform_train)
+
+            self.testset = MyMNIST(root='./data', train=False, download=True,transform=self.transform_test)
+
+            self.evalset = MyMNIST(root='./data', train=False, download=False,
+                                                         transform=self.transform_test)
+
+            self.balancedset = MyMNIST(root='./data', train=False, download=False,transform=self.transform_train)
+            # Set the network architecture
+            self.network = modified_resnet_cifar.resnet32
+            self.network_mtl = modified_resnetmtl_cifar.resnetmtl32
+            # Set the learning rate decay parameters
+            self.lr_strat = [int(self.args.epochs * 0.5), int(self.args.epochs * 0.75)]
+            # Set the dictionary size
+            # it's the number of classes (500 each class in cifar)
+            # around 1300 imgs for each class in Imagenet
+            # the least number of mnist is 5428 so to 5420
+            self.dictionary_size = 5420
         elif self.args.dataset == 'imagenet_sub' or self.args.dataset == 'imagenet':
             # Set imagenet-subset and imagenet
             # Set the data directories
@@ -183,6 +215,10 @@ class BaseTrainer(object):
             Y_train_total = np.array(self.trainset.targets)
             X_valid_total = np.array(self.testset.data)
             Y_valid_total = np.array(self.testset.targets)
+            # X_train_total = np.expand_dims(np.array(self.trainset.data), axis=1)
+            # Y_train_total = np.expand_dims(np.array(self.trainset.targets), axis=1)
+            # X_valid_total = np.expand_dims(np.array(self.testset.data), axis=1)
+            # Y_valid_total = np.expand_dims(np.array(self.testset.targets), axis=1)
         else:
             raise ValueError('Please set the correct dataset.')
 
@@ -191,7 +227,7 @@ class BaseTrainer(object):
     def init_fusion_vars(self):
         """The function to initialize the aggregation weights."""
         self.fusion_vars = nn.ParameterList()
-        if self.args.dataset == 'cifar100':
+        if self.args.dataset == 'cifar100' :
             # CIFAR-100, the number of blocks: 3
             if self.args.branch_mode == 'dual':
                 # Dual branch mode, intialize the aggregation weights to 0.5
@@ -220,6 +256,23 @@ class BaseTrainer(object):
                 raise ValueError('Please set correct mode.')
             # Send the aggregation weights to GPU 
             self.fusion_vars.to(self.device)
+
+        elif self.args.dataset == 'mnist':
+            # mnist, the number of blocks: 2
+            if self.args.branch_mode == 'dual':
+                # Dual branch mode, intialize the aggregation weights to 0.5
+                ###
+                # the fusion_vars has to be 3 if using the resnet32
+                for idx in range(3):
+                    self.fusion_vars.append(nn.Parameter(torch.FloatTensor([0.5])))
+            elif self.args.branch_mode == 'single':
+                # Single branch mode, intialize the aggregation weights for the 1st branch to 1.0, and never update them
+                for idx in range(3):
+                    self.fusion_vars.append(nn.Parameter(torch.FloatTensor([1.0])))
+            else:
+                raise ValueError('Please set correct mode.')
+            # Send the aggregation weights to GPU
+            self.fusion_vars.to(self.device)
         else:
             raise ValueError('Please set correct dataset.')
 
@@ -236,16 +289,18 @@ class BaseTrainer(object):
         # Print the name for the class order file
         print("Order name:{}".format(order_name))
         
-        if osp.exists(order_name):
-            # If we have already generated the class order file, load it
-            print("Loading the saved class order")
-            order = utils.misc.unpickle(order_name)
-        else:
-            # If we don't have the class order file, generate a new one
-            print("Generating a new class order")
-            order = np.arange(self.args.num_classes)
-            np.random.shuffle(order)
-            utils.misc.savepickle(order, order_name)
+        # if osp.exists(order_name):
+        #     # If we have already generated the class order file, load it
+        #     print("Loading the saved class order")
+        #     order = utils.misc.unpickle(order_name)
+        # else:
+        #     # If we don't have the class order file, generate a new one
+        #     print("Generating a new class order")
+        #     order = np.arange(self.args.num_classes)
+        #     np.random.shuffle(order)
+        #     utils.misc.savepickle(order, order_name)
+        order = np.arange(self.args.num_classes)
+        np.random.shuffle(order)
         # Transfer the array to a list
         order_list = list(order)
         # Print the class order
@@ -272,6 +327,18 @@ class BaseTrainer(object):
             prototypes = np.zeros((self.args.num_classes, dictionary_size, X_train_total.shape[1], X_train_total.shape[2], X_train_total.shape[3]))
             for orde in range(self.args.num_classes):
                 prototypes[orde,:,:,:,:] = X_train_total[np.where(Y_train_total==order[orde])]
+        elif self.args.dataset == 'mnist':
+            # CIFAR-100, directly load the tensors for the training samples
+            #
+            prototypes = [[] for i in range(self.args.num_classes)]
+            # prototypes = np.zeros((self.args.num_classes, dictionary_size, X_train_total.shape[1], X_train_total.shape[2], X_train_total.shape[3]))
+            for orde in range(self.args.num_classes):
+                # prototypes[orde,:,:,:,:] = X_train_total[np.where(Y_train_total==order[orde])]
+                prototypes[orde] = X_train_total[np.where(Y_train_total == order[orde])]
+                # we have to make sure the shape of different classes to be the smae
+                # prototypes[orde] = prototypes[orde][:5420]
+            prototypes = np.array(prototypes)
+            k=1
         elif self.args.dataset == 'imagenet_sub' or self.args.dataset == 'imagenet':
             # ImageNet, save the paths for the training samples if an array
             prototypes = [[] for i in range(self.args.num_classes)]
@@ -302,7 +369,7 @@ class BaseTrainer(object):
             # Set the index for last phase to 0
             last_iter = 0
             # For the 0th phase, use the conventional ResNet
-            b1_model = self.network(num_classes=self.args.nb_cl_fg)
+            b1_model = self.network(num_classes=self.args.nb_cl_fg, in_dim=1 if self.args.dataset=='mnist' else 3 )
             # Get the information about the input and output features from the network
             in_features = b1_model.fc.in_features
             out_features = b1_model.fc.out_features
@@ -323,9 +390,9 @@ class BaseTrainer(object):
             self.ref_fusion_vars = copy.deepcopy(self.fusion_vars)
             # Set the 1st branch for the 1st phase
             if self.args.branch_1 == 'ss':
-                b1_model = self.network_mtl(num_classes=self.args.nb_cl_fg)
+                b1_model = self.network_mtl(num_classes=self.args.nb_cl_fg ,in_dim=1 if self.args.dataset=='mnist' else 3)
             else:
-                b1_model = self.network(num_classes=self.args.nb_cl_fg)
+                b1_model = self.network(num_classes=self.args.nb_cl_fg ,in_dim=1 if self.args.dataset=='mnist' else 3)
             # Load the model parameters trained last phase to the current phase model
             ref_dict = ref_model.state_dict()
             tg_dict = b1_model.state_dict()
@@ -334,9 +401,9 @@ class BaseTrainer(object):
             b1_model.to(self.device)
             # Set the 2nd branch for the 1st phase
             if self.args.branch_2 == 'ss':
-                b2_model = self.network_mtl(num_classes=self.args.nb_cl_fg)
+                b2_model = self.network_mtl(num_classes=self.args.nb_cl_fg,in_dim=1 if self.args.dataset=='mnist' else 3)
             else:
-                b2_model = self.network(num_classes=self.args.nb_cl_fg)
+                b2_model = self.network(num_classes=self.args.nb_cl_fg,in_dim=1 if self.args.dataset=='mnist' else 3)
             # Load the model parameters trained last phase to the current phase model
             b2_dict = b2_model.state_dict()
             b2_dict.update(ref_dict)
@@ -519,6 +586,39 @@ class BaseTrainer(object):
             # Transfer all weights of the model to GPU
             b1_model.to(self.device)
             b1_model.fc.fc2.weight.data = novel_embedding.to(self.device)
+        elif self.args.dataset == 'mnist':
+            # Load previous FC weights, transfer them from GPU to CPU
+            old_embedding_norm = b1_model.fc.fc1.weight.data.norm(dim=1, keepdim=True)
+            average_old_embedding_norm = torch.mean(old_embedding_norm, dim=0).to('cpu').type(torch.DoubleTensor)
+            # tg_feature_model is b1_model without the FC layer
+            tg_feature_model = nn.Sequential(*list(b1_model.children())[:-1])
+            # Get the shape of the feature inputted to the FC layers, i.e., the shape for the final feature maps
+            num_features = b1_model.fc.in_features
+            # Intialize the new FC weights with zeros
+            novel_embedding = torch.zeros((self.args.nb_cl, num_features))
+            for cls_idx in range(iteration*self.args.nb_cl, (iteration+1)*self.args.nb_cl):
+                # Get the indexes of samples for one class
+                cls_indices = np.array([i == cls_idx  for i in map_Y_train])
+                # k=len(np.where(cls_indices==1)[0])
+                # Check the number of samples in this class
+                assert(len(np.where(cls_indices==1)[0])==dictionary_size)
+                # Set a temporary dataloader for the current class
+                self.evalset.data = X_train[cls_indices].astype('uint8')
+                self.evalset.targets = np.zeros(self.evalset.data.shape[0])
+                evalloader = torch.utils.data.DataLoader(self.evalset, batch_size=self.args.eval_batch_size,
+                    shuffle=False, num_workers=self.args.num_workers)
+                num_samples = self.evalset.data.shape[0]
+                # Compute the feature maps using the current model
+                cls_features = compute_features(self.args, self.fusion_vars, b1_model, b2_model, \
+                    tg_feature_model, is_start_iteration, evalloader, num_samples, num_features)
+                # Compute the normalized feature maps
+                norm_features = F.normalize(torch.from_numpy(cls_features), p=2, dim=1)
+                # Update the FC weights using the imprint weights, i.e., the normalized averged feature maps
+                cls_embedding = torch.mean(norm_features, dim=0)
+                novel_embedding[cls_idx-iteration*self.args.nb_cl] = F.normalize(cls_embedding, p=2, dim=0) * average_old_embedding_norm
+            # Transfer all weights of the model to GPU
+            b1_model.to(self.device)
+            b1_model.fc.fc2.weight.data = novel_embedding.to(self.device)
         elif self.args.dataset == 'imagenet_sub' or self.args.dataset == 'imagenet':
             # Load previous FC weights, transfer them from GPU to CPU
             old_embedding_norm = b1_model.fc.fc1.weight.data.norm(dim=1, keepdim=True)
@@ -590,6 +690,17 @@ class BaseTrainer(object):
             # Set the test dataloader
             current_test_imgs = merge_images_labels(X_valid_cumul, map_Y_valid_cumul)
             self.testset.imgs = self.testset.samples = current_test_imgs
+            testloader = torch.utils.data.DataLoader(self.testset, batch_size=self.args.test_batch_size,
+                shuffle=False, num_workers=self.args.num_workers)
+        elif self.args.dataset == 'mnist':
+            # Set the training dataloader
+            self.trainset.data = X_train.astype('uint8')
+            self.trainset.targets = map_Y_train
+            trainloader = torch.utils.data.DataLoader(self.trainset, batch_size=self.args.train_batch_size,
+                shuffle=True, num_workers=self.args.num_workers)
+            # Set the test dataloader
+            self.testset.data = X_valid_cumul.astype('uint8')
+            self.testset.targets = map_Y_valid_cumul
             testloader = torch.utils.data.DataLoader(self.testset, batch_size=self.args.test_batch_size,
                 shuffle=False, num_workers=self.args.num_workers)
         else:
@@ -738,6 +849,23 @@ class BaseTrainer(object):
             self.balancedset.imgs = self.balancedset.samples = current_train_imgs
             balancedloader = torch.utils.data.DataLoader(self.balancedset, batch_size=self.args.test_batch_size, \
             shuffle=False, num_workers=self.args.num_workers)
+
+        elif self.args.dataset == 'mnist':
+            # Load the training samples for the current phase
+            X_train_this_step = X_train_total[indices_train_10]
+            Y_train_this_step = Y_train_total[indices_train_10]
+
+            # Using random index to select the exemplars for the current phase (before training)
+            the_idx = np.random.randint(0, len(X_train_this_step), size=self.args.nb_cl * self.args.nb_protos)
+
+            # Merge the current-phase exemplars and the old exemplars
+            X_balanced_this_step = np.concatenate((X_train_this_step[the_idx], X_protoset), axis=0)
+            Y_balanced_this_step = np.concatenate((Y_train_this_step[the_idx], Y_protoset), axis=0)
+            map_Y_train_this_step = np.array([order_list.index(i) for i in Y_balanced_this_step])
+            # Build the balanced dataloader
+            self.balancedset.data = X_balanced_this_step.astype('uint8')
+            self.balancedset.targets = map_Y_train_this_step
+            balancedloader = torch.utils.data.DataLoader(self.balancedset, batch_size=self.args.test_batch_size, shuffle=False, num_workers=self.args.num_workers)
         else:
             raise ValueError('Please set the correct dataset.')
         return balancedloader
@@ -783,6 +911,10 @@ class BaseTrainer(object):
             current_eval_set = merge_images_labels(X_valid_ori, map_Y_valid_ori)
             self.evalset.imgs = self.evalset.samples = current_eval_set
             pin_memory = True
+        elif self.args.dataset == 'mnist':
+            self.evalset.data = X_valid_ori.astype('uint8')
+            self.evalset.targets = map_Y_valid_ori
+            pin_memory = False
         else:
             raise ValueError('Please set the correct dataset.')
         evalloader = torch.utils.data.DataLoader(self.evalset, batch_size=self.args.eval_batch_size,
@@ -801,6 +933,9 @@ class BaseTrainer(object):
         # Set a temporary dataloader for the current-phase data
         print('Computing cumulative accuracy...')
         if self.args.dataset == 'cifar100':
+            self.evalset.data = X_valid_cumul.astype('uint8')
+            self.evalset.targets = map_Y_valid_cumul
+        elif self.args.dataset == 'mnist':
             self.evalset.data = X_valid_cumul.astype('uint8')
             self.evalset.targets = map_Y_valid_cumul
         elif self.args.dataset == 'imagenet_sub' or self.args.dataset == 'imagenet':  
@@ -880,6 +1015,36 @@ class BaseTrainer(object):
                         alpha_dr_herding[index1,ind_max,index2] = 1+iter_herding
                         iter_herding += 1
                     w_t = w_t+mu-D[:,ind_max]
+        elif self.args.dataset == 'mnist':
+            for iter_dico in range(last_iter*self.args.nb_cl, (iteration+1)*self.args.nb_cl):
+                # Set a temporary dataloader for the current class
+                self.evalset.data = prototypes[iter_dico].astype('uint8')
+                self.evalset.targets = np.zeros(self.evalset.data.shape[0])
+                evalloader = torch.utils.data.DataLoader(self.evalset, batch_size=self.args.eval_batch_size,
+                    shuffle=False, num_workers=self.args.num_workers)
+                num_samples = self.evalset.data.shape[0]
+                # Compute the features for the current class
+                mapped_prototypes = compute_features(self.args, self.fusion_vars, b1_model, b2_model, \
+                    tg_feature_model, is_start_iteration, evalloader, num_samples, num_features)
+                # Herding algorithm
+                D = mapped_prototypes.T
+                D = D/np.linalg.norm(D,axis=0)
+                mu  = np.mean(D,axis=1)
+                index1 = int(iter_dico/self.args.nb_cl)
+                index2 = iter_dico % self.args.nb_cl
+                alpha_dr_herding[index1,:,index2] = alpha_dr_herding[index1,:,index2]*0
+                w_t = mu
+                iter_herding     = 0
+                iter_herding_eff = 0
+                #todo what is this condition?
+                while not(np.sum(alpha_dr_herding[index1,:,index2]!=0)==min(nb_protos_cl,500)) and iter_herding_eff<1000:
+                    tmp_t   = np.dot(w_t,D)
+                    ind_max = np.argmax(tmp_t)
+                    iter_herding_eff += 1
+                    if alpha_dr_herding[index1,ind_max,index2] == 0:
+                        alpha_dr_herding[index1,ind_max,index2] = 1+iter_herding
+                        iter_herding += 1
+                    w_t = w_t+mu-D[:,ind_max]
         elif self.args.dataset == 'imagenet_sub' or self.args.dataset == 'imagenet':
             for iter_dico in range(last_iter*self.args.nb_cl, (iteration+1)*self.args.nb_cl):
                 # Set a temporary dataloader for the current class
@@ -944,6 +1109,42 @@ class BaseTrainer(object):
                     X_protoset_cumuls.append(prototypes[iteration2*self.args.nb_cl+iter_dico,np.where(alph==1)[0]])
                     Y_protoset_cumuls.append(order[iteration2*self.args.nb_cl+iter_dico]*np.ones(len(np.where(alph==1)[0])))
                     # Compute the class mean values                  
+                    alph = alph/np.sum(alph)
+                    class_means[:,current_cl[iter_dico],0] = (np.dot(D,alph)+np.dot(D2,alph))/2
+                    class_means[:,current_cl[iter_dico],0] /= np.linalg.norm(class_means[:,current_cl[iter_dico],0])
+                    alph = np.ones(dictionary_size)/dictionary_size
+                    class_means[:,current_cl[iter_dico],1] = (np.dot(D,alph)+np.dot(D2,alph))/2
+                    class_means[:,current_cl[iter_dico],1] /= np.linalg.norm(class_means[:,current_cl[iter_dico],1])
+        elif self.args.dataset == 'mnist':
+            # class_means = np.zeros((num_features, self.args.num_classes, 2)) # the 2 is like placeholder
+            class_means = np.zeros((64, 10, 2))
+            for iteration2 in range(iteration+1):
+                for iter_dico in range(self.args.nb_cl):
+                    # Compute the D and D2 matrizes, which are used to compute the class mean values
+                    current_cl = order[range(iteration2*self.args.nb_cl,(iteration2+1)*self.args.nb_cl)]
+                    self.evalset.data = prototypes[iteration2*self.args.nb_cl+iter_dico].astype('uint8')
+                    self.evalset.targets = np.zeros(self.evalset.data.shape[0])
+                    evalloader = torch.utils.data.DataLoader(self.evalset, batch_size=self.args.eval_batch_size,
+                        shuffle=False, num_workers=self.args.num_workers)
+                    num_samples = self.evalset.data.shape[0]
+                    mapped_prototypes = compute_features(self.args, self.fusion_vars, b1_model, b2_model, \
+                        tg_feature_model, is_start_iteration, evalloader, num_samples, num_features)
+                    D = mapped_prototypes.T
+                    D = D/np.linalg.norm(D,axis=0)
+                    self.evalset.data = prototypes[iteration2*self.args.nb_cl+iter_dico][:,:,:,::-1].astype('uint8')
+                    evalloader = torch.utils.data.DataLoader(self.evalset, batch_size=self.args.eval_batch_size,
+                        shuffle=False, num_workers=self.args.num_workers)
+                    mapped_prototypes2 = compute_features(self.args, self.fusion_vars, b1_model, b2_model, \
+                        tg_feature_model, is_start_iteration, evalloader, num_samples, num_features)
+                    D2 = mapped_prototypes2.T
+                    D2 = D2/np.linalg.norm(D2,axis=0)
+                    # Using the indexes selected by herding
+                    alph = alpha_dr_herding[iteration2,:,iter_dico]
+                    alph = (alph>0)*(alph<nb_protos_cl+1)*1.
+                    # Add the exemplars and the labels to the lists
+                    X_protoset_cumuls.append(prototypes[iteration2*self.args.nb_cl+iter_dico,np.where(alph==1)[0]])
+                    Y_protoset_cumuls.append(order[iteration2*self.args.nb_cl+iter_dico]*np.ones(len(np.where(alph==1)[0])))
+                    # Compute the class mean values
                     alph = alph/np.sum(alph)
                     class_means[:,current_cl[iter_dico],0] = (np.dot(D,alph)+np.dot(D2,alph))/2
                     class_means[:,current_cl[iter_dico],0] /= np.linalg.norm(class_means[:,current_cl[iter_dico],0])
